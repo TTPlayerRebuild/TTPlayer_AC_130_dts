@@ -1,0 +1,27 @@
+#include <winver.h>
+1 VERSIONINFO
+FILEVERSION @AC3DTS_FIXED_VERSION@
+PRODUCTVERSION @AC3DTS_FIXED_VERSION@
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_DLL
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "Sonic853\0"
+      VALUE "FileDescription", "TTPlayer AC3/DTS audio add-in\0"
+      VALUE "FileVersion", "@AC3DTS_BUILD_VERSION@\0"
+      VALUE "InternalName", "ttp_ac3dts\0"
+      VALUE "OriginalFilename", "ttp_ac3dts.dll\0"
+      VALUE "ProductName", "TTPlayer Rebuild AC3DTS\0"
+      VALUE "ProductVersion", "@AC3DTS_BUILD_VERSION@\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END
