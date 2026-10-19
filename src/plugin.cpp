@@ -1,12 +1,20 @@
+#include "ttpcomm/audio_format_probe_impl.h"
 #include "common.h"
 namespace ttp::ac3dts {
 HMODULE module{};
 StandardContent standard_content(){for(auto name:{L"ttpctrl.dll",L"soundcore.dll",static_cast<const wchar_t*>(nullptr)})if(auto h=GetModuleHandleW(name))if(auto p=GetProcAddress(h,"CreateStdContent"))return reinterpret_cast<StandardContent>(p);return nullptr;}
-template<bool IsDecoder> class Factory final:public std::conditional_t<IsDecoder,DecoderCreator,ReaderCreator>{
+template<bool IsDecoder> class Factory final:public std::conditional_t<IsDecoder,DecoderCreator,ReaderCreator>, public ttp::format::ProbeSupport {
+protected:
+    DWORD ProbeFamilies() const noexcept override { return IsDecoder ? ttp::format::None : (dts_ ? ttp::format::Dts : ttp::format::Ac3); }
+private:
+
  LONG refs_{1};bool dts_;
 public:
  explicit Factory(bool dts):dts_(dts){}
- HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void**p)override{if(!p)return E_POINTER;*p=nullptr;if(!same(iid,IID_IUnknown)&&!same(iid,IsDecoder?cat_decoder:cat_reader))return E_NOINTERFACE;*p=this;AddRef();return S_OK;}
+ HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void**p)override{
+        if (!p) return E_POINTER;
+        if (!IsDecoder && IsEqualIID(iid, ttp::format::iid_probe)) { *p=static_cast<ttp::format::Probe*>(this); AddRef(); return S_OK; }
+if(!p)return E_POINTER;*p=nullptr;if(!same(iid,IID_IUnknown)&&!same(iid,IsDecoder?cat_decoder:cat_reader))return E_NOINTERFACE;*p=this;AddRef();return S_OK;}
  ULONG STDMETHODCALLTYPE AddRef()override{return InterlockedIncrement(&refs_);}ULONG STDMETHODCALLTYPE Release()override{auto n=InterlockedDecrement(&refs_);if(!n)delete this;return n;}
  HRESULT STDMETHODCALLTYPE Create(void**p)override{if constexpr(IsDecoder)return make_decoder(dts_,p);else return make_reader(p);}
  HRESULT STDMETHODCALLTYPE Name(wchar_t**p)override{return text(IsDecoder?(dts_?L"DVD DTS Decoder (libdts)":L"Dolby AC3 Decoder (liba52)"):L"DTS Reader",p);}

@@ -1,14 +1,23 @@
+#include "ttpcomm/audio_format_probe_impl.h"
 #include "io.h"
 #include "core.h"
 namespace ttp::ac3dts {
-class SoundReader final:public Reader,public Metadata {
+class SoundReader final:public Reader,public Metadata, public ttp::format::InfoSupport {
  LONG refs_{1};std::unique_ptr<Input> input_;ComPtr<Metadata> tags_;WAVEFORMATEX format_{};WORD bits_{};
  uint64_t start_{},length_{},position_{};Bytes prefix_;size_t prefix_position_{};bool opened_{},dts_{};
  template<class T>HRESULT property(T*p,T value){if(!p)return E_POINTER;*p={};if(!opened_)return E_UNEXPECTED;*p=value;return S_OK;}
 public:
- HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void**p)override{if(!p)return E_POINTER;*p=nullptr;if(same(iid,IID_IUnknown)||same(iid,iid_reader))*p=static_cast<Reader*>(this);else if(same(iid,iid_metadata))*p=static_cast<Metadata*>(this);else if(tags_)return tags_->QueryInterface(iid,p);else return E_NOINTERFACE;AddRef();return S_OK;}
+ HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void**p)override{
+        if (!p) return E_POINTER;
+        if (IsEqualIID(iid, ttp::format::iid_info)) { *p=static_cast<ttp::format::SourceInfo*>(this); AddRef(); return S_OK; }
+if(!p)return E_POINTER;*p=nullptr;if(same(iid,IID_IUnknown)||same(iid,iid_reader))*p=static_cast<Reader*>(this);else if(same(iid,iid_metadata))*p=static_cast<Metadata*>(this);else if(tags_)return tags_->QueryInterface(iid,p);else return E_NOINTERFACE;AddRef();return S_OK;}
  ULONG STDMETHODCALLTYPE AddRef()override{return InterlockedIncrement(&refs_);}ULONG STDMETHODCALLTYPE Release()override{auto n=InterlockedDecrement(&refs_);if(!n)delete this;return n;}
- HRESULT STDMETHODCALLTYPE Open(IStream*s,DWORD)override{if(opened_)return E_UNEXPECTED;auto hr=protect([&]{input_=std::make_unique<Input>();input_->open(s);start_=input_->base;length_=input_->size>=start_?input_->size-start_:0;
+ HRESULT STDMETHODCALLTYPE Open(IStream* probe_stream, DWORD probe_flags) override {
+        const auto probed = PrepareFormatInfo(probe_stream, ttp::format::Ac3 | ttp::format::Dts);
+        if (FAILED(probed)) return probed;
+        return CompleteFormatInfo(OpenImpl(probe_stream, probe_flags));
+    }
+    HRESULT OpenImpl(IStream*s,DWORD){if(opened_)return E_UNEXPECTED;auto hr=protect([&]{input_=std::make_unique<Input>();input_->open(s);start_=input_->base;length_=input_->size>=start_?input_->size-start_:0;
   if(input_->seekable){if(auto host=standard_content()){ULONGLONG bytes{};if(SUCCEEDED(host(s,4,tags_.put(),&bytes))){start_=tell(s);length_=bytes;}else{tags_.reset();input_->at(start_);}}}
   prefix_.resize(32768);size_t got=0;while(got<prefix_.size()){auto n=input_->read(prefix_.data()+got,DWORD(prefix_.size()-got));got+=n;if(!n)break;}prefix_.resize(got);
   Core ac3(false),dts(true);Frame found;size_t skip=0;
