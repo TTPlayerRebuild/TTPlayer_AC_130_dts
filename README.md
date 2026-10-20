@@ -36,3 +36,5 @@ Reader 读取压缩流，宿主选择独立 Decoder；Decoder 输出 float64 PCM
 ## 可选格式识别接口
 
 2026-10-20：Reader 工厂增加 Probe，Reader 增加 SourceInfo；旧导出和接口槽位保持不变。声明与辅助实现位于 `include/ttpcomm/audio_format_probe.h` 和 `audio_format_probe_impl.h`，不增加运行时 DLL 依赖。协议原件在相邻 `ttpcomm/sdk/AUDIO_FORMAT_PROBE.md`；新建插件指南在相邻 `rebuild/docs/AUDIO_PLUGIN_DEVELOPMENT_GUIDE.md`。原版播放器继续使用旧接口；错误后缀候选选择和更名提示由支持新协议的重建播放器执行。
+
+[a52dec-0.8.0.tar.gz](https://github.com/user-attachments/files/33714374/a52dec-0.8.0.tar.gz)
