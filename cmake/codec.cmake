@@ -7,7 +7,7 @@ foreach(dependency a52 dca)
   set(FETCHCONTENT_SOURCE_DIR_${dependency_upper} "${CMAKE_CURRENT_SOURCE_DIR}/third_party/${dependency}/source")
  endif()
 endforeach()
-FetchContent_Declare(a52 URL https://distfiles.adelielinux.org/source/a52dec/a52dec-0.8.0.tar.gz
+FetchContent_Declare(a52 URL https://github.com/user-attachments/files/33714374/a52dec-0.8.0.tar.gz
  URL_HASH SHA256=03c181ce9c3fe0d2f5130de18dab9bd8bc63c354071515aa56983c74a9cffcc9
  SOURCE_SUBDIR no-upstream-cmake)
 FetchContent_Declare(dca URL https://download.videolan.org/pub/videolan/libdca/0.0.7/libdca-0.0.7.tar.bz2
