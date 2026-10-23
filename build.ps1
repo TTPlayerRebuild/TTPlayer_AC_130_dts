@@ -36,24 +36,9 @@ $archive = Join-Path $output "ttp_ac3dts-$PackageVersion.zip"
 Compress-Archive -LiteralPath (Join-Path $stage 'AddIn'),(Join-Path $stage 'SHA256SUMS.txt') -DestinationPath $archive -Force
 $archives = @($archive)
 if ($SourcePackage) {
-    $source = Join-Path $stagingRoot 'source/ttp_ac3dts'
-    New-Item -ItemType Directory -Path $source -Force | Out-Null
-    # Corresponding source is separate from the minimal runtime package.
-    # Explicit allowlist excludes private tests, binaries and local evidence.
-    foreach ($entry in @('CMakeLists.txt','build.ps1','README.md','.gitignore',
-                         'cmake','src','include','docs','licenses','.github')) {
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $entry) -Destination $source -Recurse
-    }
-    $PackageVersion | Set-Content -LiteralPath (Join-Path $source 'BUILD_VERSION') -Encoding ASCII
-    foreach ($dependency in @('a52','dca')) {
-        $upstream = (Get-Content -LiteralPath (Join-Path $BuildDirectory "$dependency-source-path.txt") -Encoding UTF8 -Raw).Trim()
-        $destination = Join-Path $source "third_party/$dependency/source"
-        New-Item -ItemType Directory -Path $destination -Force | Out-Null
-        # Complete, fixed upstream release source; patches stay in codec.cmake.
-        Get-ChildItem -LiteralPath $upstream -Force | Copy-Item -Destination $destination -Recurse
-    }
+    & python (Join-Path $PSScriptRoot 'cmake/package_source.py') --project $PSScriptRoot --build $BuildDirectory --version $PackageVersion
+    if ($LASTEXITCODE -ne 0) { throw 'Corresponding-source package failed.' }
     $sourceArchive = Join-Path $output "ttp_ac3dts-$PackageVersion-source.zip"
-    Compress-Archive -LiteralPath $source -DestinationPath $sourceArchive -Force
     $archives += $sourceArchive
 }
 Get-FileHash -LiteralPath $archives -Algorithm SHA256 |

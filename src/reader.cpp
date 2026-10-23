@@ -1,6 +1,7 @@
 #include "ttpcomm/audio_format_probe_impl.h"
 #include "io.h"
 #include "core.h"
+#include "dts_core.h"
 namespace ttp::ac3dts {
 class SoundReader final:public Reader,public Metadata, public ttp::format::InfoSupport {
  LONG refs_{1};std::unique_ptr<Input> input_;ComPtr<Metadata> tags_;WAVEFORMATEX format_{};WORD bits_{};
@@ -20,9 +21,9 @@ if(!p)return E_POINTER;*p=nullptr;if(same(iid,IID_IUnknown)||same(iid,iid_reader
     HRESULT OpenImpl(IStream*s,DWORD){if(opened_)return E_UNEXPECTED;auto hr=protect([&]{input_=std::make_unique<Input>();input_->open(s);start_=input_->base;length_=input_->size>=start_?input_->size-start_:0;
   if(input_->seekable){if(auto host=standard_content()){ULONGLONG bytes{};if(SUCCEEDED(host(s,4,tags_.put(),&bytes))){start_=tell(s);length_=bytes;}else{tags_.reset();input_->at(start_);}}}
   prefix_.resize(32768);size_t got=0;while(got<prefix_.size()){auto n=input_->read(prefix_.data()+got,DWORD(prefix_.size()-got));got+=n;if(!n)break;}prefix_.resize(got);
-  Core ac3(false),dts(true);Frame found;size_t skip=0;
-  for(;skip+20<=prefix_.size();++skip){auto a=ac3.sync(prefix_.data()+skip);if(a.bytes>0&&a.rate>0&&a.bitrate>0&&size_t(a.bytes)<=prefix_.size()-skip){found=a;dts_=false;break;}auto d=dts.sync(prefix_.data()+skip);if(d.bytes>0&&d.rate>0&&d.bitrate>0&&size_t(d.bytes)<=prefix_.size()-skip){found=d;dts_=true;break;}}
-  require(found.bytes>0);auto channels=channel_map(dts_,found.flags).count;format_={WORD(dts_?0x2001:0x2000),channels,DWORD(found.rate),DWORD(found.bitrate/8),WORD(found.bytes),0,0};bits_=WORD(found.bits);
+  Core ac3;Frame found;size_t skip=0;
+  for(;skip+20<=prefix_.size();++skip){auto a=ac3.sync(prefix_.data()+skip);if(a.bytes>0&&a.rate>0&&a.bitrate>0&&size_t(a.bytes)<=prefix_.size()-skip){found=a;dts_=false;break;}auto dh=dts_header(prefix_.data()+skip,prefix_.size()-skip);Frame d{int(dh.bytes),0,int(dh.rate),dh.samples?int(uint64_t(dh.bytes)*8*dh.rate/dh.samples):0,int(dh.samples),int(dh.bits),int(dh.channels)};if(d.bytes>0&&d.rate>0&&d.bitrate>0&&size_t(d.bytes)<=prefix_.size()-skip){found=d;dts_=true;break;}}
+  require(found.bytes>0);auto channels=dts_?found.channels:channel_map(found.flags).count;format_={WORD(dts_?0x2001:0x2000),WORD(channels),DWORD(found.rate),DWORD(found.bitrate/8),WORD(found.bytes),0,0};bits_=WORD(found.bits);
   start_+=skip;if(length_)length_-=std::min<uint64_t>(skip,length_);
   if(!input_->seekable&&skip)prefix_.erase(prefix_.begin(),prefix_.begin()+skip);
   // Original 60051a78 skips the first synchronised frame's leading bytes.

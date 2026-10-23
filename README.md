@@ -1,40 +1,49 @@
-# TTPlayer AC3／DTS 插件重建
+# TTPlayer AC3／DTS 插件
 
-恢复原版四工厂的 x86 `ttp_ac3dts.dll`，供原版 5.7.9 与重建版共用：AC3 Decoder、DTS Decoder、AC3 Reader、DTS Reader。原两 Reader 的显示名均为 `DTS Reader`，保留此 ABI 可见行为。
+面向原版 5.7.9 和重建播放器的 x86 `ttp_ac3dts.dll`。现代 DTS 功能已统一到此 DLL，独立 `ttp_dts` 项目停止分发并在本地备份后移除。2026.10.23p1 补齐 E-AC3、DTS Core 快速准确定位和 WAVE 标签／封面写入，保留原四个工厂编号、GUID、导出和 AC3 功能。
 
-Reader 读取压缩流，宿主选择独立 Decoder；Decoder 输出 float64 PCM，恢复 1–6 声道模式与原版通道顺序。支持 AC3／A52、DTS／DTSWAV、DTS 16-bit BE／LE 和 14-bit packed 表示。标签仍委托宿主 `CreateStdContent`；没有该宿主服务时可播放，标签写入返回不支持。
+## 接口与播放
+
+| 工厂编号 | 功能 | 实现 |
+| --- | --- | --- |
+| 0 | AC3 Decoder | liba52；保持原浮点 PCM 路径 |
+| 1 | DTS Decoder | FFmpeg DCA；旧压缩流接口输出 float64 DTS Core |
+| 2 | AC3 Reader | 保留压缩读取、同步扫描、宿主标签服务及定位行为 |
+| 3 | DTS Reader | FFmpeg 解封装和解码；输出 float64／PCM24、WAVEFORMATEXTENSIBLE 和声道掩码 |
+| 4 | Dolby Digital Plus Reader | E-AC3，支持 .eac3／.ec3／.ac3，直接输出 PCM |
+
+历史显示名称保留，包括两个 Reader 都叫 `DTS Reader`、编号 1 名称中的 `libdts`；实际 DTS 后端已统一为 FFmpeg。
+
+DTS Reader 支持原始 DTS、DTS-WAV、16／14 位大小端表示以及较大 RIFF 前置块。增加 `.dtshd`、`.wav`、`.wave` 候选扩展名，并通过可选 Probe／SourceInfo 接口避免把普通 PCM WAV 误认成 DTS。`.dts`、`.dtswav` 保留。
+
+原始 DTS 标签委托宿主 `CreateStdContent`；原版公共服务不支持写入封面，重建版服务支持。WAVE 使用独立的 RIFF／RF64 原生编辑器，支持 Unicode 标签、多封面、显式 Commit 和失败恢复。旧宿主在最后释放时保存；重建宿主可获得真实提交结果。
 
 ## 固定依赖
 
 | 组件 | 版本 | SHA-256 |
 | --- | --- | --- |
 | liba52 / a52dec | 0.8.0 | `03c181ce9c3fe0d2f5130de18dab9bd8bc63c354071515aa56983c74a9cffcc9` |
-| libdca | 0.0.7 | `3a0b13815f582c661d2388ffcabc2f1ea82f471783c400f765f2ec6c81065f6a` |
+| FFmpeg | 9.0.2 | `8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e` |
+| GNU make（构建工具） | 4.4.1 | `dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3` |
 
-构建时下载，来源及补丁见 `cmake/codec.cmake`；GPL-2.0-or-later、VC-LTL、YY-Thunks 许可证保存在 `licenses/`。
+构建时下载固定版本并校验。FFmpeg 仅启用所需 DCA／E-AC3 解码、DTS／AC3／E-AC3／WAV／SPDIF 解封装、DCA／AC3 parser 和 swresample；静态链接，不要求外置 FFmpeg DLL。版权和许可证保存在 `licenses/`，不作为资源嵌入 DLL。旧 libdca 的许可证作为历史记录保留，它已不参与构建。
 
 ```powershell
 ./build.ps1 -Package -SourcePackage
 ```
 
-现代 MSVC、Win32、VC-LTL／YY-Thunks；XP SP3／Win7／新系统共用，要求 SSE2。独立 Action 采用北京时间日期版本，包中仅 DLL 和 SHA256SUMS；私有测试不上传、不在 Action 运行。
+需要 Windows、现代 MSVC Win32、CMake 3.24+、Python 3.12+ 和 Git for Windows Bash。VC-LTL／YY-Thunks 用于同一个 XP SP3／Win7／新系统 DLL，CPU 要求 SSE2；不要求用户另装 VC 运行库。构建依赖和导入审计见 `cmake/`。
 
-## 已验证与差异
+Action 使用北京时间日期版本，运行 ZIP 仅包含 `AddIn/ttp_ac3dts.dll` 和 `SHA256SUMS.txt`。发布另附完整对应源码 ZIP，包含 a52dec、FFmpeg、GNU make 源码、适配层和构建脚本。解压源码包后可直接运行同一构建命令，自动选用包内源码和 `BUILD_VERSION`；VC-LTL／YY-Thunks 仍按固定哈希取得。
 
-恢复了原 DTS 的 **49152 QMF 归一化**，保留 LFE 的 8388608。不能直接使用新版 libdca 默认 `sqrt(2)*32768`，否则主声道会比原版更大声。
+liba52 为 GPL-2.0-or-later，当前插件整体分发须遵循其条款；FFmpeg 精简配置为 LGPL-2.1-or-later。GNU make 仅作为构建工具。私有测试在相邻 `rebuild/tests`，不上传、不打入运行包、不在 Action 中运行。
 
-双声道、5.1、两档音量、短读和小缓冲均已与原 DLL 对照；修正后 DTS 幅度拟合约为 1，残差约 `1.2e-10`。AC3 有小的逐样本差异，不能称为原二进制 PCM 完全相同。详情、地址和限制见 `docs/RECONSTRUCTION.md`。
+## 验证及边界
 
-## 发布对应源码
+本轮已在 Windows 11、XP SP3、Win7 SP1 验证实际宿主加载／短时播放与关闭，并检查独立解码、短读、容量边界、定位、声道和宿主标签生命周期。AC3 与整合前重建 DLL 逐字节一致；DTS 两个适配入口的核心 PCM 逐字节一致。
 
-发布 Action 同时提供 `ttp_ac3dts-版本-source.zip`，包含适配源码、完整的 a52dec 0.8.0 和 libdca 0.0.7 上游发行源码、许可证与构建脚本。两份 ZIP 的 SHA-256 都写入发行清单。上游源码仍不提交 Git，运行 ZIP 的内容保持最小。
+DTS 保留原核心主声道音量系数，LFE 不套用该系数。但 FFmpeg 与 libdca 的滤波实现不同，**不声明与原 DLL 逐样本一致**。DTS-HD 的完整解码走文件 Reader；旧 Decoder 保持预先协商的 Core 采样率和声道，不能在播放途中改成 HD 格式。完整 HD 扩展层仍缺真实样本验证。
 
-解压源码包后执行上述构建命令；CMake 自动选用包内 `third_party/a52/source`、`third_party/dca/source`，通过 `BUILD_VERSION` 保持对应资源版本。需要 Windows、CMake 3.24+、现代 MSVC Win32 和 Python；固定的 VC-LTL／YY-Thunks 构建依赖仍按 `cmake/legacy_windows.cmake` 下载并校验。内核修改集中在 `cmake/codec.cmake` 与 `src/decoder.cpp`，原始发行源码不被就地修改。
+原版 EXE 自带 WAVE Reader 可能抢先接受 PCM 头的 DTS-WAV；此宿主限制不能靠新增扩展名彻底修复。在原版中使用 `.dtswav` 可进入插件，重建版已有按内容选择 DTS 的路径。独立 DTS Core 帧使用稀疏索引与预卷定位，不能证明状态独立的编码仍保留从头精确解码。
 
-包含这两个 GPL-2.0-or-later 核心的插件整体分发遵循 GPL 条款；`licenses/` 中保留完整许可证。源码包不含测试音频、私有测试和反编译证据。
-
-## 可选格式识别接口
-
-2026-10-20：Reader 工厂增加 Probe，Reader 增加 SourceInfo；旧导出和接口槽位保持不变。声明与辅助实现位于 `include/ttpcomm/audio_format_probe.h` 和 `audio_format_probe_impl.h`，不增加运行时 DLL 依赖。协议原件在相邻 `ttpcomm/sdk/AUDIO_FORMAT_PROBE.md`；新建插件指南在相邻 `rebuild/docs/AUDIO_PLUGIN_DEVELOPMENT_GUIDE.md`。原版播放器继续使用旧接口；错误后缀候选选择和更名提示由支持新协议的重建播放器执行。
-
-[a52dec-0.8.0.tar.gz](https://github.com/user-attachments/files/33714374/a52dec-0.8.0.tar.gz)
+详见 [边界 3～5 补全与迁移](docs/BOUNDARIES_3_5_20261023.md)、[先前整合记录](docs/DTS_INTEGRATION_20261023.md) 和 [原实现恢复证据](docs/RECONSTRUCTION.md)。Windows 10 未独立实测；按用户要求使用 Windows 11 代验。

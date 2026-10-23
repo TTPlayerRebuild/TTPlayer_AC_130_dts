@@ -28,7 +28,7 @@ $notes = @"
 解压 ttp_ac3dts-$version.zip，关闭播放器后，将 AddIn/ttp_ac3dts.dll 放入安装目录。
 同一 x86 DLL 面向 XP SP3、Win7 和新系统，CPU 需要 SSE2。
 运行 ZIP 仅包含 AddIn/ttp_ac3dts.dll 和 SHA256SUMS.txt。测试不在 Action 中运行。
-对应源码另见 ttp_ac3dts-$version-source.zip，包含 a52dec 0.8.0 与 libdca 0.0.7 完整固定源码、适配层、构建脚本和许可证。
+对应源码另见 ttp_ac3dts-$version-source.zip，包含 a52dec 0.8.0、FFmpeg 9.0.2 和 GNU make 4.4.1 完整固定源码、适配层、构建脚本和许可证。DTS 使用共享 FFmpeg 后端，不再链接 libdca。
 包含 GPL-2.0-or-later 解码核心的插件整体分发须遵循其条款；源码包内的构建说明支持重建对应版本。
 
 [源码、构建和兼容边界]($repoUrl/tree/$Commit)

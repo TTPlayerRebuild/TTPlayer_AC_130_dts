@@ -1,0 +1,141 @@
+"""Build a pinned, minimal FFmpeg static backend with MSVC and the XP CRT.
+
+Sources are downloaded at build time. GNU make is bootstrapped from official
+source in this build tree; no package manager or system configuration is changed.
+"""
+import argparse, hashlib, json, os, pathlib, re, shutil, subprocess, sys, tarfile, urllib.request
+
+FFMPEG_VERSION = '9.0.2'
+FFMPEG_SHA256 = '8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e'
+MAKE_SHA256 = 'dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3'
+
+def download(url, dest, digest):
+    if not dest.exists() or hashlib.sha256(dest.read_bytes()).hexdigest()!=digest:
+        urllib.request.urlretrieve(url, dest)
+    if hashlib.sha256(dest.read_bytes()).hexdigest()!=digest:
+        raise RuntimeError('Dependency SHA256 mismatch: '+str(dest))
+
+def extract(archive, dest):
+    with tarfile.open(archive) as t:
+        t.extractall(dest,filter='data')
+
+def vc_environment(vcvars, arch, folder):
+    script=folder/('env-'+arch+'.cmd')
+    script.write_text('@echo off\ncall "'+str(vcvars)+'" '+arch+' >nul\nset\n',encoding='utf-8')
+    r=subprocess.run(['cmd','/d','/c',str(script)],capture_output=True,check=True)
+    env=os.environ.copy()
+    for line in r.stdout.decode('mbcs').splitlines():
+        if '=' in line and not line.startswith('='):
+            k,v=line.split('=',1);env[k.upper()]=v
+    # Windows environment keys are case-insensitive, Python dict keys are not.
+    return {k.upper():v for k,v in env.items()}
+
+def posix(path):
+    p=str(pathlib.Path(path).resolve()).replace('\\','/')
+    return '/'+p[0].lower()+p[2:] if len(p)>1 and p[1]==':' else p
+
+def native_make_paths(content):
+    # Only a drive prefix at the beginning of a makefile path is MSYS syntax.
+    # Global /a/ replacement corrupts the runner's D:/a/<repo>/... directory,
+    # and also corrupts /d/a/<repo>/... before its /d/ prefix can be converted.
+    return re.sub(r'''(^|[ \t="'])/([a-zA-Z])/''',
+                  lambda m: m[1]+m[2].upper()+':/', content, flags=re.MULTILINE)
+
+def run_logged(command, *, cwd, env, log_path, phase, append=False):
+    try:
+        with log_path.open('a' if append else 'w', encoding='utf-8') as log:
+            log.write(phase+': '+subprocess.list2cmdline([str(x) for x in command])+'\n')
+            log.flush()
+            subprocess.run(command,cwd=cwd,env=env,stdout=log,
+                           stderr=subprocess.STDOUT,check=True)
+    except subprocess.CalledProcessError as error:
+        tail='\n'.join(log_path.read_text(encoding='utf-8',errors='replace').splitlines()[-60:])
+        print(f'{phase} failed; last log lines ({log_path}):\n{tail}',file=sys.stderr,flush=True)
+        raise RuntimeError(f'{phase} failed with exit code {error.returncode}; see {log_path}') from error
+
+def main():
+    ap=argparse.ArgumentParser()
+    ap.add_argument('--build',type=pathlib.Path,required=True)
+    ap.add_argument('--vs',type=pathlib.Path,required=True)
+    ap.add_argument('--ltl',type=pathlib.Path,required=True)
+    ap.add_argument('--kind',choices=['dts','dsd'],required=True)
+    ap.add_argument('--bash',type=pathlib.Path)
+    ap.add_argument('--source',type=pathlib.Path)
+    ap.add_argument('--make-archive',type=pathlib.Path)
+    a=ap.parse_args();b=a.build.resolve();b.mkdir(parents=True,exist_ok=True)
+    git=shutil.which('git')
+    bash=a.bash or (pathlib.Path(git).resolve().parent.parent/'bin/bash.exe' if git else None)
+    if not bash or not bash.is_file():
+        raise RuntimeError('Git for Windows bash.exe is required; set TTP_FFMPEG_BASH.')
+    vcvars=a.vs/'VC/Auxiliary/Build/vcvarsall.bat'
+    source=a.source.resolve() if a.source else b/('ffmpeg-'+FFMPEG_VERSION)
+    make_source=b/'make-4.4.1'
+    if not source.exists():
+        tar=b/('ffmpeg-'+FFMPEG_VERSION+'.tar.xz')
+        download('https://ffmpeg.org/releases/'+tar.name,tar,FFMPEG_SHA256);extract(tar,b)
+    make=make_source/'WinRel/gnumake.exe'
+    if not make.is_file():
+        if not make_source.exists():
+            tar=a.make_archive.resolve() if a.make_archive else b/'make-4.4.1.tar.gz'
+            download('https://ftp.gnu.org/gnu/make/'+tar.name,tar,MAKE_SHA256);extract(tar,b)
+        run_logged(['cmd','/d','/c','build_w32.bat','--without-guile'],cwd=make_source,
+            env=vc_environment(vcvars,'x64',b),log_path=b/'make-build.log',phase='GNU make bootstrap')
+    out=b/('ffmpeg-'+a.kind);out.mkdir(exist_ok=True)
+    decoders={'dts':'dca,eac3','dsd':'dsd_lsbf,dsd_msbf,dsd_lsbf_planar,dsd_msbf_planar,dst'}[a.kind]
+    demuxers={'dts':'dts,eac3,ac3,wav,spdif','dsd':'dsf,iff'}[a.kind]
+    options=['--toolchain=msvc','--target-os=win32','--arch=x86','--disable-asm',
+        '--disable-everything','--disable-autodetect','--disable-programs','--disable-doc',
+        '--disable-network','--disable-avdevice','--disable-avfilter','--disable-swscale',
+        '--enable-swresample','--enable-w32threads','--disable-pthreads','--disable-debug',
+        '--disable-iconv','--enable-small','--enable-static','--disable-shared',
+        '--enable-decoder='+decoders,'--enable-demuxer='+demuxers,'--enable-parser=dca,ac3' if a.kind=='dts' else '--disable-parsers',
+        '--extra-cflags=-MT -O1 -Gy -Gw -D_WIN32_WINNT=0x0601',
+        '--extra-ldflags=-NODEFAULTLIB:libcmt -DEFAULTLIB:msvcrt']
+    source_digest=hashlib.sha256()
+    for source_file in sorted(source.rglob('*')):
+        if source_file.is_file() and (source_file.suffix in ('.c','.h','.S','.asm','.mak') or source_file.name in ('configure','Makefile')):
+            source_digest.update(source_file.relative_to(source).as_posix().encode())
+            source_digest.update(source_file.read_bytes())
+    identity={'source':str(source),'source_sha256':source_digest.hexdigest(),'version':FFMPEG_VERSION,'sha256':FFMPEG_SHA256,'options':options,
+              'script':hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
+              'vs':str(a.vs),'ltl':str(a.ltl)}
+    stamp=out/'build-identity.json'
+    libraries=[out/('lib'+x)/(x+'.lib') for x in ('avcodec','avformat','swresample','avutil')]
+    if stamp.exists() and json.loads(stamp.read_text())==identity and all(p.exists() for p in libraries):
+        return
+    env=vc_environment(vcvars,'x86',b)
+    ltl=a.ltl.resolve()
+    env['INCLUDE']=str(ltl/'TargetPlatform/5.1.2600.0/header')+';'+str(ltl/'TargetPlatform/header')+';'+env.get('INCLUDE','')
+    env['LIB']=str(ltl/'TargetPlatform/5.1.2600.0/lib/Win32')+';'+env.get('LIB','')
+    env['MSYS2_ARG_CONV_EXCL']='*'
+    env['PATH']=str(bash.parent.parent/'usr/bin')+';'+str(bash.parent)+';'+env['PATH']
+    import shlex
+    configure=' '.join(shlex.quote(s) for s in ['bash',(source/'configure').as_posix()]+options)
+    # FFmpeg configure creates this include-only file only when it is absent.
+    # Regenerate it after an identity change, including a prior failed build
+    # whose path was damaged by the old conversion. Never remove source files.
+    if out.resolve()==source.resolve():
+        raise RuntimeError('FFmpeg source and build directories must be different')
+    (out/'Makefile').unlink(missing_ok=True)
+    run_logged([str(bash),'-c',configure],cwd=out,env=env,
+        log_path=b/('ffmpeg-'+a.kind+'-configure.log'),phase='FFmpeg configure')
+    configuration=(out/'config.h').read_text(encoding='utf-8')
+    for forbidden in ('CONFIG_GPL','CONFIG_NONFREE','CONFIG_VERSION3','CONFIG_GPLV3'):
+        if '#define '+forbidden+' 0' not in configuration:raise RuntimeError('Non-LGPL-2.1 backend profile: '+forbidden)
+    # Configure runs in Git's POSIX shell; native GNU make opens include files
+    # itself and therefore needs drive-letter paths rather than /c or /d paths.
+    for path in (out/'Makefile',out/'ffbuild/config.mak'):
+        content=path.read_text(encoding='utf-8')
+        path.write_text(native_make_paths(content),encoding='utf-8')
+    # Fixed dependency sources: no locale-dependent /showIncludes parser is
+    # needed. Any configuration/script change rebuilds all dependency objects.
+    build_log=b/('ffmpeg-'+a.kind+'-build.log')
+    shell='SHELL='+(bash.parent.parent/'usr/bin/sh.exe').as_posix()
+    run_logged([str(make),'clean',shell],cwd=out,env=env,
+        log_path=build_log,phase='FFmpeg clean')
+    run_logged([str(make),'-j4','CCDEP=','CXXDEP=','HOSTCCDEP=',shell],cwd=out,env=env,
+        log_path=build_log,phase='FFmpeg build',append=True)
+    if not all(p.exists() for p in libraries):raise RuntimeError('FFmpeg static libraries missing')
+    stamp.write_text(json.dumps(identity,indent=2),encoding='utf-8')
+
+if __name__=='__main__':main()
