@@ -39,9 +39,29 @@ class AudioReader final : public Reader,
   size_t consumed_{};
   uint64_t position_{}, total_output_{}, decoded_samples_{};
   uint64_t expected_input_{};
+  uint64_t scanned_samples_{};
   DWORD duration_{}, bitrate_{};
   WORD depth_{};
   HRESULT io_error_{S_OK};
+  bool resume_pending_{};
+  uint64_t resume_position_{};
+  void replay_to(uint64_t target) {
+    resume_pending_ = true;
+    resume_position_ = target;
+    close_container();
+    input_.at(input_.base);
+    position_ = 0;
+    check_seek_offset_ = -1;
+    open_container();
+    while (position_ < target) {
+      require(consumed_ != pcm_.size() || next(), STG_E_READFAULT);
+      auto n = std::min<uint64_t>(target-position_,
+                   (pcm_.size()-consumed_)/wave_.Format.nBlockAlign);
+      consumed_ += size_t(n)*wave_.Format.nBlockAlign;
+      position_ += n;
+    }
+    resume_pending_ = false;
+  }
   bool opened_{}, draining_{}, decoder_end_{}, eof_{}, floating_{};
   std::atomic_bool stopped_{};
   std::wstring codec_name_;
@@ -110,6 +130,12 @@ class AudioReader final : public Reader,
     });
     if (FAILED(hr)) {
       s.io_error_ = hr;
+      if (hr == E_ABORT || hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+        if (s.input_.seekable) {
+          if (!s.resume_pending_) s.resume_position_ = s.position_;
+          s.resume_pending_ = true;
+        } else s.io_error_ = STG_E_READFAULT;
+      }
       return AVERROR(EIO);
     }
     return got ? int(got) : AVERROR_EOF;
@@ -348,6 +374,7 @@ class AudioReader final : public Reader,
             ? av_rescale_q(st->duration, st->time_base, {1, 1000})
             : container_->duration / 1000;
     duration_ = duration > 0 ? dword(uint64_t(duration)) : 0;
+    if(scanned_samples_)duration_=milliseconds(scanned_samples_,rate);
     // FFmpeg's raw DTS duration estimate uses the unpacked core bitrate even
     // for 14-bit transport. When the file is an exact number of equal-sized
     // core packets, compute duration from samples, not that inflated estimate.
@@ -375,6 +402,30 @@ class AudioReader final : public Reader,
         eac3_ ? L"E-AC3|Dolby Digital Plus" : L"DTS|Digital Theater Systems";
     identify_source();
     convert();
+  }
+  void scan_duration_if_missing() {
+    // A positive duration may still be FFmpeg's bitrate estimate. Express
+    // padding and variable-sized HD packets make that estimate inaccurate.
+    const bool estimated_hd =
+        container_->duration_estimation_method == AVFMT_DURATION_FROM_BITRATE &&
+        core_.Context()->profile != AV_PROFILE_DTS;
+    if((duration_ && !estimated_hd) || !input_.seekable || input_.remote ||
+       std::string(container_->iformat->name)!="dts")return;
+    // Variable-size HD frames have no constant bitrate from which to infer
+    // duration. Sum demuxed packet times without decoding their PCM payloads.
+    const auto timebase=container_->streams[stream_index_]->time_base;
+    uint64_t samples{};bool complete=false,valid=true;
+    for(unsigned packets=0;packets<4000000;++packets){
+      if(packet_->stream_index==stream_index_){
+        const auto n=av_rescale_q(packet_->duration,timebase,{1,int(wave_.Format.nSamplesPerSec)});
+        if(n<=0 || uint64_t(n)>UINT64_MAX-samples){valid=false;break;}
+        samples+=uint64_t(n);
+      }
+      av_packet_unref(packet_);const auto status=av_read_frame(container_,packet_);check(io_error_);
+      if(status==AVERROR_EOF){complete=true;break;}check_av(status);
+    }
+    if(complete&&valid)scanned_samples_=samples;
+    close_container();input_.at(input_.base);open_container();
   }
   void read_metadata() {
     const auto add = [&](AVDictionary *dictionary) {
@@ -503,6 +554,7 @@ public:
           }
       }
       open_container();
+      scan_duration_if_missing();
       read_metadata();
       if (wave_edit_) {
         art_ = wave_edit_->OriginalPictures();
@@ -590,6 +642,7 @@ public:
       capacity -= capacity % wave_.Format.nBlockAlign;
       require(capacity, E_INVALIDARG);
       require(out, E_POINTER);
+      if (resume_pending_) replay_to(resume_position_);
       if (consumed_ == pcm_.size() && !next())
         return S_FALSE;
       auto n = DWORD(std::min<size_t>(capacity, pcm_.size() - consumed_));
@@ -608,6 +661,7 @@ public:
       require(!stopped_, HRESULT_FROM_WIN32(ERROR_CANCELLED));
       const uint64_t desired =
           uint64_t(*ms) * wave_.Format.nSamplesPerSec / 1000;
+      if (resume_pending_ || FAILED(io_error_)) replay_to(0);
       // Only independent ordinary DTS Core frames are indexed. HD/ES/96-24
       // histories and E-AC3 dither/SPX are not guessed from a byte offset.
       if (desired < position_) {

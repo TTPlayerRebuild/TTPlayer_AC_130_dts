@@ -1,5 +1,9 @@
 # TTPlayer AC3／DTS 插件
 
+最新补全与验收：[2026-10-24](docs/COMPLETION_20261024.md)。
+
+DTS Express 真实样本与时长修正：[2026-10-24](docs/DTS_EXPRESS_VALIDATION_20261024.md)。
+
 面向原版 5.7.9 和重建播放器的 x86 `ttp_ac3dts.dll`。现代 DTS 功能已统一到此 DLL，独立 `ttp_dts` 项目停止分发并在本地备份后移除。2026.10.23p1 补齐 E-AC3、DTS Core 快速准确定位和 WAVE 标签／封面写入，保留原四个工厂编号、GUID、导出和 AC3 功能。
 
 ## 接口与播放
@@ -42,7 +46,7 @@ liba52 为 GPL-2.0-or-later，当前插件整体分发须遵循其条款；FFmpe
 
 本轮已在 Windows 11、XP SP3、Win7 SP1 验证实际宿主加载／短时播放与关闭，并检查独立解码、短读、容量边界、定位、声道和宿主标签生命周期。AC3 与整合前重建 DLL 逐字节一致；DTS 两个适配入口的核心 PCM 逐字节一致。
 
-DTS 保留原核心主声道音量系数，LFE 不套用该系数。但 FFmpeg 与 libdca 的滤波实现不同，**不声明与原 DLL 逐样本一致**。DTS-HD 的完整解码走文件 Reader；旧 Decoder 保持预先协商的 Core 采样率和声道，不能在播放途中改成 HD 格式。完整 HD 扩展层仍缺真实样本验证。
+DTS 保留原核心主声道音量系数，LFE 不套用该系数。但 FFmpeg 与 libdca 的滤波实现不同，**不声明与原 DLL 逐样本一致**。DTS-HD 的完整解码走文件 Reader；旧 Decoder 保持预先协商的 Core 采样率和声道，不能在播放途中改成 HD 格式。真实 MA／HRA 的有效片段以及 Express stereo／5.1 已验证；损坏尾部、全部扩展选项和原版宿主的 5／7 声道输出限制仍单列，详见上方补全报告。
 
 原版 EXE 自带 WAVE Reader 可能抢先接受 PCM 头的 DTS-WAV；此宿主限制不能靠新增扩展名彻底修复。在原版中使用 `.dtswav` 可进入插件，重建版已有按内容选择 DTS 的路径。独立 DTS Core 帧使用稀疏索引与预卷定位，不能证明状态独立的编码仍保留从头精确解码。
 
