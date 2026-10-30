@@ -40,6 +40,7 @@ class AudioReader final : public Reader,
   uint64_t position_{}, total_output_{}, decoded_samples_{};
   uint64_t expected_input_{};
   uint64_t scanned_samples_{};
+  bool exact_duration_{};
   DWORD duration_{}, bitrate_{};
   WORD depth_{};
   HRESULT io_error_{S_OK};
@@ -311,6 +312,7 @@ class AudioReader final : public Reader,
   }
   void open_container() {
     decoded_samples_ = 0;
+    exact_duration_ = scanned_samples_ != 0;
     io_error_ = S_OK;
     draining_ = decoder_end_ = eof_ = false;
     pcm_.clear();
@@ -395,6 +397,7 @@ class AudioReader final : public Reader,
       const uint64_t samples = bytes / unsigned(packet_->size) * header.samples;
       duration_ = milliseconds(samples, rate);
       bitrate_ = dword(uint64_t(packet_->size) * 8 * rate / header.samples);
+      exact_duration_ = true;
     }
     if (!bitrate_ && duration_ && input_.size <= UINT64_MAX / 8000)
       bitrate_ = dword(input_.size * 8000 / duration_);
@@ -406,10 +409,10 @@ class AudioReader final : public Reader,
   void scan_duration_if_missing() {
     // A positive duration may still be FFmpeg's bitrate estimate. Express
     // padding and variable-sized HD packets make that estimate inaccurate.
-    const bool estimated_hd =
+    const bool estimated =
         container_->duration_estimation_method == AVFMT_DURATION_FROM_BITRATE &&
-        core_.Context()->profile != AV_PROFILE_DTS;
-    if((duration_ && !estimated_hd) || !input_.seekable || input_.remote ||
+        !exact_duration_;
+    if((duration_ && !estimated) || !input_.seekable || input_.remote ||
        std::string(container_->iformat->name)!="dts")return;
     // Variable-size HD frames have no constant bitrate from which to infer
     // duration. Sum demuxed packet times without decoding their PCM payloads.
@@ -709,7 +712,11 @@ public:
         consumed_ += size_t(n) * wave_.Format.nBlockAlign;
         position_ += n;
       }
-      *ms = milliseconds(position_, wave_.Format.nSamplesPerSec);
+      // desired is already floor(requested_ms * rate / 1000). Returning its
+      // floored millisecond value again makes the host discard another sample
+      // interval at rates such as 44.1 kHz (1 ms -> 44 samples -> 0 ms).
+      if(position_ != desired)
+        *ms = milliseconds(position_, wave_.Format.nSamplesPerSec);
       return S_OK;
     });
   }

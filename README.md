@@ -1,5 +1,7 @@
 # TTPlayer AC3／DTS 插件
 
+2026.10.29：[FLAC 载体复用、44.1 kHz 精确定位和填充时长修正](docs/FLAC_CARRIER_SEEK_DURATION_20261029.md)。
+
 最新补全与验收：[2026-10-24](docs/COMPLETION_20261024.md)。
 
 DTS Express 真实样本与时长修正：[2026-10-24](docs/DTS_EXPRESS_VALIDATION_20261024.md)。
